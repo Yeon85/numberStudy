@@ -1,0 +1,157 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>초1용 50~100 숫자 말하기 연습</title>
+<style>
+  :root{
+    --bg:#0f1115; --card:#161a22; --line:#232a37; --ink:#e9ecf1; --muted:#9aa4b2; --accent:#6ea8fe; --ok:#32d96b; --bad:#ff6b6b;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font-family:system-ui,-apple-system,Segoe UI,Roboto,"Noto Sans KR",sans-serif}
+  .wrap{max-width:680px;margin:0 auto;padding:16px}
+  header{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:10px}
+  header h1{font-size:18px;margin:0;font-weight:700}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:16px}
+  .row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+  .chip{padding:8px 12px;border:1px solid var(--line);border-radius:999px;color:var(--muted);font-size:14px}
+  .big{font-size:96px;line-height:1;font-weight:800;text-align:center;margin:16px 0 4px}
+  .sub{font-size:16px;text-align:center;color:var(--muted);min-height:22px}
+  .center{display:flex;justify-content:center;gap:10px;margin:14px 0 8px;flex-wrap:wrap}
+  button{border:1px solid var(--line);background:#1b2130;color:#dfe6ef;border-radius:12px;padding:12px 16px;font-size:16px;cursor:pointer}
+  button:hover{filter:brightness(1.08)}
+  .primary{background:#21406a;border-color:#2d4670}
+  .ghost{background:transparent}
+  .ok{color:var(--ok)}
+  .bad{color:var(--bad)}
+  .status{display:flex;align-items:center;gap:8px;justify-content:center;color:var(--muted);font-size:14px}
+  .dot{width:10px;height:10px;border-radius:50%;background:#666}
+  .dot.live{background:#2ecc71;box-shadow:0 0 0 6px #2ecc7140}
+  .bar{height:10px;background:#0e1320;border:1px solid var(--line);border-radius:999px;overflow:hidden}
+  .fill{height:100%;width:0%;background:linear-gradient(90deg,#6ea8fe,#32d96b)}
+  .range{display:flex;gap:8px;align-items:center}
+  input[type=number]{width:88px;background:#101522;color:#dfe6ef;border:1px solid var(--line);border-radius:10px;padding:8px}
+  .help{font-size:13px;color:var(--muted);text-align:center;margin-top:6px}
+  /* confetti */
+  .confetti{position:fixed;left:0;top:0;width:100%;height:100%;pointer-events:none;overflow:hidden}
+  .piece{position:absolute;top:-10px;width:10px;height:14px;opacity:.9;animation:fall 1500ms linear forwards}
+  @keyframes pop {0%{transform:scale(.5);opacity:.0}100%{transform:scale(1);opacity:1}}
+  @keyframes fall {
+    0%{transform:translateY(-20px) rotate(0deg)}
+    100%{transform:translateY(110vh) rotate(720deg)}
+  }
+  .hint{font-size:14px;color:#cbd5e1;text-align:center;margin-top:8px}
+</style>
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <h1>🎤 50~100 숫자 말하기 연습</h1>
+      <div class="row">
+        <span class="chip">마이크로 숫자를 말하면 다음 숫자가 나와요</span>
+      </div>
+    </header>
+
+    <div class="card">
+      <div class="row" style="justify-content:space-between;align-items:end">
+        <div class="range">
+          <label>시작</label><input id="start" type="number" min="0" max="1000" value="50" />
+          <label>끝</label><input id="end" type="number" min="0" max="1000" value="100" />
+          <button id="apply" class="ghost">범위 적용</button>
+        </div>
+        <div class="range">
+          <label class="chip">진행: <span id="progressText">0 / 51</span></label>
+        </div>
+      </div>
+
+      <div class="bar" style="margin:12px 0 8px">
+        <div id="fill" class="fill"></div>
+      </div>
+
+      <div id="current" class="big" aria-live="polite">50</div>
+      <div id="feedback" class="sub">&nbsp;</div>
+
+      <div class="center">
+        <button id="btnMic" class="primary">🎙️ 시작(마이크)</button>
+        <button id="btnStop" class="ghost">⏹ 멈추기</button>
+        <button id="btnNext" class="ghost" title="인식 어려울 때">➡️ 다음</button>
+        <button id="btnRepeat" class="ghost">🔁 다시 말하기(TTS)</button>
+      </div>
+
+      <div class="status">
+        <span id="dot" class="dot"></span>
+        <span id="statusText">대기 중</span>
+      </div>
+
+      <p class="help">마이크 권한이 없거나 인식이 어려우면 <b>스페이스바</b> 또는 <b>다음</b> 버튼으로 진행할 수 있어요.</p>
+      <p class="hint">작동 팁: 아이가 “오십오(=55)”, “육십”, “백”처럼 <b>한글 숫자</b>로 말해도 자동으로 인식해요.</p>
+    </div>
+  </div>
+
+  <div id="fx" class="confetti" aria-hidden="true"></div>
+
+<script>
+(function(){
+  // ======= 상태 =======
+  const elStart = document.getElementById('start');
+  const elEnd = document.getElementById('end');
+  const elApply = document.getElementById('apply');
+  const elCurrent = document.getElementById('current');
+  const elFeedback = document.getElementById('feedback');
+  const elFill = document.getElementById('fill');
+  const elProgressText = document.getElementById('progressText');
+  const btnMic = document.getElementById('btnMic');
+  const btnStop = document.getElementById('btnStop');
+  const btnNext = document.getElementById('btnNext');
+  const btnRepeat = document.getElementById('btnRepeat');
+  const dot = document.getElementById('dot');
+  const statusText = document.getElementById('statusText');
+  const fx = document.getElementById('fx');
+
+  let seq = [];
+  let idx = 0;          // 현재 인덱스
+  let listening = false;
+  let recog = null;
+
+  function buildSeq(){
+    const s = Math.min(Number(elStart.value||50), Number(elEnd.value||100));
+    const e = Math.max(Number(elStart.value||50), Number(elEnd.value||100));
+    seq = [];
+    for(let i=s;i<=e;i++) seq.push(i);
+    idx = 0;
+    updateUI();
+  }
+
+  function updateUI(){
+    const total = seq.length;
+    const cur = seq[idx] ?? seq[total-1];
+    elCurrent.textContent = cur;
+    elProgressText.textContent = `${Math.min(idx, total) } / ${total}`;
+    const ratio = total? (idx/total)*100 : 0;
+    elFill.style.width = `${ratio}%`;
+    elFeedback.innerHTML = "&nbsp;";
+  }
+
+  function next(){
+    idx++;
+    if(idx >= seq.length){
+      finish();
+      return;
+    }
+    popIfMilestone(seq[idx-1]);
+    updateUI();
+    speakCurrent(false); // 살짝 안내
+  }
+
+  function finish(){
+    elCurrent.textContent = "🎉 끝!";
+    elFeedback.innerHTML = `<span class="ok">아주 잘했어요! 50부터 ${seq.at(-1)}까지 완주! 👏</span>`;
+    burstConfetti();
+    stopListen();
+  }
+
+  // ======= 간단 TTS =======
+  function speak(text){
+    try{
+      cons
