@@ -1,0 +1,250 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>초1용 50~100 숫자 말하기 연습</title>
+<style>
+  :root{--bg:#0f1115;--card:#161a22;--line:#232a37;--ink:#e9ecf1;--muted:#9aa4b2;--accent:#6ea8fe;--ok:#32d96b;--bad:#ff6b6b}
+  *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font-family:system-ui,-apple-system,Segoe UI,Roboto,"Noto Sans KR",sans-serif}
+  .wrap{max-width:680px;margin:0 auto;padding:16px}
+  header{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:10px}
+  header h1{font-size:18px;margin:0;font-weight:700}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:16px}
+  .row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+  .chip{padding:8px 12px;border:1px solid var(--line);border-radius:999px;color:var(--muted);font-size:14px}
+  .big{font-size:96px;line-height:1;font-weight:800;text-align:center;margin:16px 0 4px}
+  .sub{font-size:16px;text-align:center;color:var(--muted);min-height:22px}
+  .center{display:flex;justify-content:center;gap:10px;margin:14px 0 8px;flex-wrap:wrap}
+  button{border:1px solid var(--line);background:#1b2130;color:#dfe6ef;border-radius:12px;padding:12px 16px;font-size:16px;cursor:pointer}
+  button[disabled]{opacity:.5;cursor:not-allowed}
+  .primary{background:#21406a;border-color:#2d4670}
+  .ghost{background:transparent}
+  .ok{color:var(--ok)} .bad{color:var(--bad)}
+  .status{display:flex;align-items:center;gap:8px;justify-content:center;color:var(--muted);font-size:14px}
+  .dot{width:10px;height:10px;border-radius:50%;background:#666}.dot.live{background:#2ecc71;box-shadow:0 0 0 6px #2ecc7140}
+  .bar{height:10px;background:#0e1320;border:1px solid var(--line);border-radius:999px;overflow:hidden}
+  .fill{height:100%;width:0%;background:linear-gradient(90deg,#6ea8fe,#32d96b)}
+  .range{display:flex;gap:8px;align-items:center}
+  input[type=number]{width:88px;background:#101522;color:#dfe6ef;border:1px solid var(--line);border-radius:10px;padding:8px}
+  .confetti{position:fixed;left:0;top:0;width:100%;height:100%;pointer-events:none;overflow:hidden}
+  .piece{position:absolute;top:-10px;width:10px;height:14px;opacity:.9;animation:fall 1500ms linear forwards}
+  @keyframes fall{0%{transform:translateY(-20px) rotate(0)}100%{transform:translateY(110vh) rotate(720deg)}}
+  .log{margin-top:10px;font-size:12px;color:#cbd5e1;background:#0f1422;border:1px solid #1f2940;border-radius:10px;padding:10px;max-height:120px;overflow:auto}
+  .warn{color:#ffd166}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>🎤 50~100 숫자 말하기 연습</h1>
+    <div class="row"><span class="chip">마이크 허용 후 숫자를 말하면 다음 숫자가 나와요</span></div>
+  </header>
+
+  <div class="card">
+    <div class="row" style="justify-content:space-between;align-items:end">
+      <div class="range">
+        <label>시작</label><input id="start" type="number" min="0" max="1000" value="50" />
+        <label>끝</label><input id="end" type="number" min="0" max="1000" value="100" />
+        <button id="apply" class="ghost">범위 적용</button>
+      </div>
+      <div class="range"><label class="chip">진행: <span id="progressText">0 / 51</span></label></div>
+    </div>
+
+    <div class="bar" style="margin:12px 0 8px"><div id="fill" class="fill"></div></div>
+
+    <div id="current" class="big" aria-live="polite">50</div>
+    <div id="feedback" class="sub">&nbsp;</div>
+
+    <div class="center">
+      <button id="btnMic" class="primary">🎙️ 시작(마이크)</button>
+      <button id="btnStop" class="ghost" disabled>⏹ 멈추기</button>
+      <button id="btnNext" class="ghost" title="인식 어려울 때">➡️ 다음</button>
+      <button id="btnRepeat" class="ghost">🔁 다시 말하기(TTS)</button>
+      <button id="btnPerm" class="ghost" title="마이크 권한 미리 요청">🎚 권한 확인</button>
+    </div>
+
+    <div class="status">
+      <span id="dot" class="dot"></span>
+      <span id="statusText">대기 중</span>
+    </div>
+
+    <div id="log" class="log" aria-live="polite"></div>
+  </div>
+</div>
+<div id="fx" class="confetti" aria-hidden="true"></div>
+
+<script>
+(function(){
+  const elStart = document.getElementById('start');
+  const elEnd = document.getElementById('end');
+  const elApply = document.getElementById('apply');
+  const elCurrent = document.getElementById('current');
+  const elFeedback = document.getElementById('feedback');
+  const elFill = document.getElementById('fill');
+  const elProgressText = document.getElementById('progressText');
+  const btnMic = document.getElementById('btnMic');
+  const btnStop = document.getElementById('btnStop');
+  const btnNext = document.getElementById('btnNext');
+  const btnRepeat = document.getElementById('btnRepeat');
+  const btnPerm = document.getElementById('btnPerm');
+  const dot = document.getElementById('dot');
+  const statusText = document.getElementById('statusText');
+  const fx = document.getElementById('fx');
+  const logArea = document.getElementById('log');
+
+  let seq = [], idx = 0, listening = false, recog = null;
+
+  function log(msg, warn=false){
+    const p = document.createElement('div');
+    p.innerHTML = (warn?'<span class="warn">⚠</span> ':'') + msg;
+    logArea.appendChild(p);
+    logArea.scrollTop = logArea.scrollHeight;
+  }
+
+  // 지원 점검
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if(!SR){
+    log('이 브라우저는 음성 인식을 지원하지 않습니다. (Chrome/Edge 권장, iOS 미지원)', true);
+    btnMic.disabled = true;
+    btnStop.disabled = true;
+    statusText.textContent = '브라우저 미지원';
+  }else{
+    log('음성 인식 API 감지됨: OK');
+  }
+
+  async function ensureMicPermission(){
+    try{
+      // HTTPS 또는 localhost에서만 동작. 권한 요청 겸 마이크 기기 확인
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      stream.getTracks().forEach(t=>t.stop());
+      log('마이크 권한: 허용됨');
+      return true;
+    }catch(e){
+      log(`마이크 권한 오류: ${e.name||e} — 주소창 🔒에서 마이크 “허용”으로 바꾸고 새로고침`, true);
+      return false;
+    }
+  }
+
+  function buildSeq(){
+    const s = Math.min(Number(elStart.value||50), Number(elEnd.value||100));
+    const e = Math.max(Number(elStart.value||50), Number(elEnd.value||100));
+    seq = []; for(let i=s;i<=e;i++) seq.push(i);
+    idx = 0; updateUI();
+  }
+  function updateUI(){
+    const total = seq.length;
+    const cur = seq[idx] ?? seq[total-1];
+    elCurrent.textContent = cur;
+    elProgressText.textContent = `${Math.min(idx, total)} / ${total}`;
+    elFill.style.width = `${total? (idx/total)*100:0}%`;
+    elFeedback.innerHTML = "&nbsp;";
+  }
+  function next(){
+    idx++;
+    if(idx >= seq.length){ finish(); return; }
+    popIfMilestone(seq[idx-1]); updateUI(); speakCurrent(false);
+  }
+  function finish(){
+    elCurrent.textContent = "🎉 끝!";
+    elFeedback.innerHTML = `<span class="ok">아주 잘했어요! 50부터 ${seq.at(-1)}까지 완주! 👏</span>`;
+    burstConfetti(); stopListen();
+  }
+
+  function speak(text){
+    try{ const u = new SpeechSynthesisUtterance(String(text)); u.lang='ko-KR'; u.rate=1.0;
+      speechSynthesis.cancel(); speechSynthesis.speak(u);
+    }catch(e){}
+  }
+  function speakCurrent(force=true){ const n = seq[idx]; if(n==null) return; if(force) speak(n); }
+
+  const mapOnes = {'영':0,'공':0,'일':1,'하나':1,'둘':2,'이':2,'셋':3,'삼':3,'넷':4,'사':4,'다섯':5,'오':5,'여섯':6,'륙':6,'육':6,'일곱':7,'칠':7,'여덟':8,'팔':8,'아홉':9,'구':9};
+  const mapTens = {'오십':50,'육십':60,'륙십':60,'칠십':70,'팔십':80,'구십':90,'백':100};
+  function parseKoreanNumber(s){
+    if(!s) return NaN;
+    s = s.replace(/\s+/g,'').replace(/[^\u3131-\u318F\uAC00-\uD7A30-9]/g,'');
+    if(/^\d+$/.test(s)) return Number(s);
+    if(s==='백') return 100;
+    for(const t in mapTens){
+      if(s.startsWith(t)){
+        const base = mapTens[t], rest = s.slice(t.length);
+        if(rest==='') return base;
+        if(mapOnes.hasOwnProperty(rest)) return base + mapOnes[rest];
+        for(const k in mapOnes){ if(rest===k) return base + mapOnes[k]; }
+      }
+    }
+    if(s.length===2 && mapOnes[s[0]] && mapOnes[s[1]]){
+      const maybe = mapOnes[s[0]]*10 + mapOnes[s[1]];
+      if(maybe>=50 && maybe<=100) return maybe;
+    }
+    if(mapOnes.hasOwnProperty(s)) return mapOnes[s];
+    return NaN;
+  }
+
+  function initRecog(){
+    if(!SR) return null;
+    const r = new SR();
+    r.lang='ko-KR'; r.continuous=false; r.interimResults=true; r.maxAlternatives=3;
+    r.onstart=()=>{ setLive(true,'듣는 중… 숫자를 말해보세요'); btnMic.disabled=true; btnStop.disabled=false; };
+    r.onend = ()=>{ setLive(false,'대기 중'); btnMic.disabled=false; btnStop.disabled=true; if(listening){ try{ r.start(); }catch(e){} } };
+    r.onresult = (ev)=>{
+      let finalText = '';
+      for(let i=ev.resultIndex;i<ev.results.length;i++){
+        const res = ev.results[i]; if(res.isFinal) finalText = res[0].transcript.trim();
+      }
+      if(finalText){ log('인식: '+finalText); handleSpoken(finalText); }
+    };
+    r.onerror = (e)=>{ log('인식 오류: '+(e.error||e), true); setLive(false,'인식 오류'); };
+    return r;
+  }
+
+  async function startListen(){
+    if(listening) return;
+    // 권한 선요청
+    const ok = await ensureMicPermission();
+    if(!ok){ statusText.textContent='마이크 권한 필요'; return; }
+    if(!recog) recog = initRecog();
+    if(!recog){ alert('이 브라우저는 음성 인식을 지원하지 않아요. (Chrome/Edge 권장)'); return; }
+    listening = true; try{ recog.start(); }catch(e){ log('start() 실패: '+e, true); }
+    speakCurrent(false);
+  }
+  function stopListen(){ listening=false; if(recog){ try{ recog.stop(); }catch(e){} } setLive(false,'대기 중'); }
+  function setLive(live,text){ dot.classList.toggle('live', live); statusText.textContent = text || (live?'듣는 중…':'대기 중'); }
+
+  function handleSpoken(text){
+    const want = seq[idx];
+    const heardNum = parseKoreanNumber(text);
+    const numericInText = Number(text.replace(/[^0-9]/g,''));
+    const candidate = !isNaN(heardNum) ? heardNum : (!isNaN(numericInText) ? numericInText : NaN);
+    if(candidate===want){ elFeedback.innerHTML = `<span class="ok">정답! <b>${want}</b> 👏</span>`; next(); }
+    else{
+      if(isNaN(candidate)) elFeedback.innerHTML = `<span class="bad">“${text}” → 다시 또박또박 말해볼까요?</span>`;
+      else elFeedback.innerHTML = `<span class="bad">들린 값: ${candidate} (정답은 ${want})</span>`;
+    }
+  }
+
+  function popIfMilestone(n){ if([60,70,80,90,100].includes(n)) burstConfetti(80); }
+  function burstConfetti(count=60){
+    const colors=['#6ea8fe','#32d96b','#ffd166','#ff6b6b','#a78bfa'];
+    for(let i=0;i<count;i++){
+      const d=document.createElement('div'); d.className='piece';
+      d.style.left=(Math.random()*100)+'%'; d.style.background=colors[i%colors.length];
+      d.style.animationDuration=(1000+Math.random()*1000)+'ms'; fx.appendChild(d);
+      setTimeout(()=>d.remove(), 1800);
+    }
+  }
+
+  btnMic.addEventListener('click', startListen);
+  btnStop.addEventListener('click', stopListen);
+  btnNext.addEventListener('click', ()=>{ elFeedback.innerHTML='&nbsp;'; next(); });
+  btnRepeat.addEventListener('click', ()=> speakCurrent(true));
+  btnPerm.addEventListener('click', ()=> ensureMicPermission());
+  elApply.addEventListener('click', ()=>{ buildSeq(); speakCurrent(false); });
+  window.addEventListener('keydown', (e)=>{ if(e.code==='Space'){ e.preventDefault(); btnNext.click(); } });
+
+  buildSeq();
+  statusText.textContent='대기 중 (🎙️ 시작을 누르기 전에 권한 확인을 해보세요)';
+})();
+</script>
+</body>
+</html>
