@@ -1,0 +1,331 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>초1용 50~100 숫자 말하기 연습 (띵동+폭죽/땡)</title>
+<style>
+  :root{
+    --bg:#0b0e14; --card:#121725; --line:#232a37;
+    --ink:#e9eef7; --muted:#9aa4b2; --ok:#35d07f; --bad:#ff6b6b;
+  }
+  *{box-sizing:border-box}
+  html,body{height:100%}
+  body{margin:0;background:var(--bg);color:var(--ink);font-family:system-ui,-apple-system,Segoe UI,Roboto,"Noto Sans KR",sans-serif;overflow:hidden}
+  /* Fireworks canvas as background */
+  #fwCanvas{position:fixed;inset:0;z-index:0;background:radial-gradient(ellipse at bottom,#0b0e14 0%,#070a10 60%,#05070c 100%)}
+  .wrap{position:relative;z-index:1;max-width:720px;margin:0 auto;padding:18px}
+  header{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:10px}
+  header h1{font-size:18px;margin:0;font-weight:700}
+  .card{background:rgba(18,23,37,.86);backdrop-filter:blur(6px);border:1px solid var(--line);border-radius:16px;padding:16px}
+  .row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+  .chip{padding:8px 12px;border:1px solid var(--line);border-radius:999px;color:var(--muted);font-size:14px;background:rgba(255,255,255,.02)}
+  .big{font-size:96px;line-height:1;font-weight:900;text-align:center;margin:16px 0 4px;text-shadow:0 6px 24px rgba(0,0,0,.45)}
+  .sub{font-size:16px;text-align:center;color:var(--muted);min-height:22px}
+  .spoken{margin:8px 0 0;font-size:15px;text-align:center;color:#b7c2d6;min-height:28px}
+  .spoken b{color:#fff}
+  .center{display:flex;justify-content:center;gap:10px;margin:14px 0 8px;flex-wrap:wrap}
+  button{border:1px solid var(--line);background:#18213a;color:#eaf2ff;border-radius:12px;padding:12px 16px;font-size:16px;cursor:pointer}
+  button[disabled]{opacity:.5;cursor:not-allowed}
+  .primary{background:#244a86;border-color:#2a4e8a}
+  .ghost{background:transparent}
+  .ok{color:var(--ok)} .bad{color:var(--bad)}
+  .status{display:flex;align-items:center;gap:8px;justify-content:center;color:#9aa4b2;font-size:14px}
+  .dot{width:10px;height:10px;border-radius:50%;background:#666}
+  .dot.live{background:#2ecc71;box-shadow:0 0 0 6px #2ecc7140}
+  .bar{height:10px;background:rgba(10,14,24,.7);border:1px solid var(--line);border-radius:999px;overflow:hidden}
+  .fill{height:100%;width:0%;background:linear-gradient(90deg,#6ea8fe,#32d96b)}
+  .range{display:flex;gap:8px;align-items:center}
+  input[type=number]{width:88px;background:#101522;color:#dfe6ef;border:1px solid var(--line);border-radius:10px;padding:8px}
+  .help{font-size:12px;color:#9aa4b2;text-align:center;margin-top:6px}
+</style>
+</head>
+<body>
+<canvas id="fwCanvas"></canvas>
+
+<div class="wrap">
+  <header>
+    <h1>🎤 50~100 숫자 말하기 연습</h1>
+    <div class="row"><span class="chip">정답 → 띵동 + 폭죽 배경 · 오답 → 땡</span></div>
+  </header>
+
+  <div class="card">
+    <div class="row" style="justify-content:space-between;align-items:end">
+      <div class="range">
+        <label>시작</label><input id="start" type="number" value="50"/>
+        <label>끝</label><input id="end" type="number" value="100"/>
+        <button id="apply" class="ghost">범위 적용</button>
+      </div>
+      <div class="range"><label class="chip">진행: <span id="progressText">0 / 51</span></label></div>
+    </div>
+
+    <div class="bar" style="margin:12px 0 8px"><div id="fill" class="fill"></div></div>
+
+    <div id="current" class="big" aria-live="polite">50</div>
+    <div id="feedback" class="sub">&nbsp;</div>
+    <div id="spoken" class="spoken">💬 내가 말한 말: <b>-</b></div>
+
+    <div class="center">
+      <button id="btnMic" class="primary">🎙️ 시작(마이크)</button>
+      <button id="btnStop" class="ghost" disabled>⏹ 멈추기</button>
+      <button id="btnNext" class="ghost">➡️ 다음</button>
+      <button id="btnRepeat" class="ghost">🔁 다시 말하기(TTS)</button>
+    </div>
+
+    <div class="status">
+      <span id="dot" class="dot"></span>
+      <span id="statusText">대기 중</span>
+    </div>
+    <p class="help">iOS는 음성인식 미지원. <b>Live Server</b> 등으로 <code>http://localhost</code>에서 실행해 주세요. (스페이스바로도 진행 가능)</p>
+  </div>
+</div>
+
+<script>
+/* =======================
+   WebAudio: 효과음 (띵동/땡)
+   ======================= */
+let audioCtx;
+function getAudioCtx(){
+  if(!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  return audioCtx;
+}
+function envGain(ctx, attack=0.005, hold=0.05, release=0.15, peak=0.9){
+  const g = ctx.createGain();
+  const t = ctx.currentTime;
+  g.gain.setValueAtTime(0, t);
+  g.gain.linearRampToValueAtTime(peak, t+attack);
+  g.gain.setValueAtTime(peak, t+attack+hold);
+  g.gain.exponentialRampToValueAtTime(0.0001, t+attack+hold+release);
+  return g;
+}
+function playTone(freq=880, dur=0.15, type='sine', vol=0.9, delay=0){
+  const ctx = getAudioCtx();
+  const osc = ctx.createOscillator();
+  const g = envGain(ctx, 0.005, Math.max(0, dur-0.04), 0.12, vol);
+  osc.type = type;
+  osc.frequency.setValueAtTime(freq, ctx.currentTime + delay);
+  osc.connect(g).connect(ctx.destination);
+  osc.start(ctx.currentTime + delay);
+  osc.stop(ctx.currentTime + delay + dur + 0.2);
+}
+function playDingDong(){
+  // “딩” (E6 ≈ 1319Hz) → 120ms, “동” (A5 ≈ 880Hz) → 160ms
+  playTone(1319, 0.12, 'sine', 0.9, 0);
+  playTone(880,  0.16, 'sine', 0.9, 0.16);
+}
+function playBuzz(){
+  // 낮은 “땡” 느낌: 220Hz 톤 + 약한 noise 클릭
+  playTone(220, 0.25, 'sawtooth', 0.7, 0);
+  // 작은 노이즈 펄스
+  const ctx = getAudioCtx();
+  const buffer = ctx.createBuffer(1, ctx.sampleRate*0.08, ctx.sampleRate);
+  const data = buffer.getChannelData(0);
+  for(let i=0;i<data.length;i++) data[i] = (Math.random()*2-1) * (1 - i/data.length) * 0.2;
+  const src = ctx.createBufferSource(); src.buffer = buffer;
+  const g = ctx.createGain(); g.gain.value = 0.35;
+  src.connect(g).connect(ctx.destination); src.start();
+}
+
+/* =======================
+   Fireworks (Canvas 배경)
+   ======================= */
+const fwCanvas = document.getElementById('fwCanvas');
+const c = fwCanvas.getContext('2d',{ alpha: true });
+let W=innerWidth, H=innerHeight; fwCanvas.width=W; fwCanvas.height=H;
+addEventListener('resize', ()=>{ W=innerWidth; H=innerHeight; fwCanvas.width=W; fwCanvas.height=H; });
+
+const sparks = [];
+function launchFirework(x=W/2, y=H*0.6, colorHue=Math.random()*360, power=1){
+  // 핵심: 원점에서 여러 파티클 방출
+  const count = Math.floor(120*power);
+  for(let i=0;i<count;i++){
+    const ang = Math.random()*Math.PI*2;
+    const spd = (0.8+Math.random()*1.7) * (power);
+    sparks.push({
+      x,y,
+      vx: Math.cos(ang)*spd,
+      vy: Math.sin(ang)*spd - (0.8+Math.random()*0.4),
+      life: 0,
+      max: 60 + Math.random()*40,
+      hue: colorHue + (Math.random()*30-15),
+      size: 1.5+Math.random()*2.2
+    });
+  }
+}
+function fwLoop(){
+  // 배경 잔상
+  c.fillStyle = 'rgba(5,8,14,0.28)';
+  c.fillRect(0,0,W,H);
+  for(let i=sparks.length-1;i>=0;i--){
+    const p=sparks[i];
+    p.life++;
+    p.x+=p.vx; p.y+=p.vy;
+    p.vy+=0.018; // gravity
+    // 그리기
+    const alpha = 1 - p.life/p.max;
+    const grad = c.createRadialGradient(p.x,p.y,0,p.x,p.y,p.size*5);
+    grad.addColorStop(0, `hsla(${p.hue},100%,70%,${0.9*alpha})`);
+    grad.addColorStop(1, `hsla(${p.hue},100%,50%,0)`);
+    c.fillStyle = grad;
+    c.beginPath();
+    c.arc(p.x,p.y,p.size,0,Math.PI*2);
+    c.fill();
+    if(p.life>p.max) sparks.splice(i,1);
+  }
+  requestAnimationFrame(fwLoop);
+}
+fwLoop();
+function celebrate(power=1){
+  // 화면 전역으로 3~5회 폭죽
+  const n = 3 + Math.floor(Math.random()*3);
+  for(let i=0;i<n;i++){
+    setTimeout(()=>{
+      launchFirework(
+        Math.random()*W*0.9+W*0.05,
+        Math.random()*H*0.6+H*0.15,
+        Math.random()*360,
+        power
+      );
+    }, i*120);
+  }
+}
+
+/* =======================
+   학습 로직 (음성인식)
+   ======================= */
+(function(){
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  const elStart=document.getElementById('start'), elEnd=document.getElementById('end'), elApply=document.getElementById('apply');
+  const elCurrent=document.getElementById('current'), elFeedback=document.getElementById('feedback');
+  const elSpoken=document.getElementById('spoken').querySelector('b');
+  const elFill=document.getElementById('fill'), elProgressText=document.getElementById('progressText');
+  const btnMic=document.getElementById('btnMic'), btnStop=document.getElementById('btnStop'), btnNext=document.getElementById('btnNext'), btnRepeat=document.getElementById('btnRepeat');
+  const dot=document.getElementById('dot'), statusText=document.getElementById('statusText');
+  let seq=[],idx=0,recog=null,listening=false;
+
+  function buildSeq(){
+    const s=Math.min(+elStart.value||50, +elEnd.value||100);
+    const e=Math.max(+elStart.value||50, +elEnd.value||100);
+    seq=[]; for(let i=s;i<=e;i++) seq.push(i);
+    idx=0; updateUI();
+  }
+  function updateUI(){
+    const total=seq.length;
+    const cur=seq[idx]??seq[total-1];
+    elCurrent.textContent=cur;
+    elProgressText.textContent=`${Math.min(idx,total)} / ${total}`;
+    elFill.style.width=`${total?(idx/total)*100:0}%`;
+    elFeedback.innerHTML="&nbsp;";
+  }
+
+  const mapOnes={'영':0,'공':0,'일':1,'하나':1,'둘':2,'이':2,'셋':3,'삼':3,'넷':4,'사':4,'다섯':5,'오':5,'여섯':6,'육':6,'칠':7,'일곱':7,'팔':8,'여덟':8,'구':9,'아홉':9};
+  const mapTens={'오십':50,'육십':60,'칠십':70,'팔십':80,'구십':90,'백':100};
+  function parseKoreanNumber(s){
+    if(!s) return NaN;
+    s=s.replace(/\s+/g,'').replace(/[^\u3131-\u318F\uAC00-\uD7A30-9]/g,'');
+    if(/^\d+$/.test(s)) return +s;
+    if(s==='백') return 100;
+    for(const t in mapTens){
+      if(s.startsWith(t)){
+        const base=mapTens[t], rest=s.slice(t.length);
+        if(!rest) return base;
+        if(mapOnes[rest]!=null) return base+mapOnes[rest];
+      }
+    }
+    if(mapOnes[s]!=null) return mapOnes[s];
+    return NaN;
+  }
+
+  function speak(n){
+    try{ const u=new SpeechSynthesisUtterance(String(n)); u.lang='ko-KR'; speechSynthesis.cancel(); speechSynthesis.speak(u); }catch(e){}
+  }
+
+  function next(autoSpeak=true){
+    idx++;
+    if(idx>=seq.length){ finish(); return; }
+    elFeedback.innerHTML="&nbsp;"; elSpoken.textContent='-';
+    updateUI(); if(autoSpeak) speak(seq[idx]);
+  }
+  function finish(){
+    elCurrent.textContent="🎉 끝!";
+    elFeedback.innerHTML=`<span class="ok">아주 잘했어요! 👏</span>`;
+    celebrate(1.4); // 마지막은 좀 더 크게
+    playDingDong();
+    stopListen();
+  }
+
+  function handleSpoken(text){
+    elSpoken.textContent=text;
+    const want=seq[idx];
+    const heard=parseKoreanNumber(text);
+    const numIn=Number(text.replace(/[^0-9]/g,''));
+    const val=!isNaN(heard)?heard:(!isNaN(numIn)?numIn:NaN);
+
+    if(val===want){
+      // 정답: 띵동 → 폭죽 → 다음
+      elFeedback.innerHTML=`<span class="ok">정답! ${want} 👏</span>`;
+      playDingDong();
+      celebrate(1.0);
+      // 다음 숫자는 효과음 재생 직후 자연스럽게 넘기기(약간의 지연)
+      setTimeout(()=>next(true), 260);
+    }else{
+      // 오답: 땡 (버저)
+      elFeedback.innerHTML=isNaN(val)
+        ? `<span class="bad">다시 또박또박 말해볼까요? (정답 ${want})</span>`
+        : `<span class="bad">들린 값 ${val} (정답 ${want})</span>`;
+      playBuzz();
+      // 틀린 경우에는 넘어가지 않음
+    }
+  }
+
+  function initRecog(){
+    if(!SR){ alert('이 브라우저는 음성 인식을 지원하지 않아요. (Chrome/Edge 권장)'); return null; }
+    const r=new SR();
+    r.lang='ko-KR'; r.continuous=true; r.interimResults=true; r.maxAlternatives=3;
+    r.onstart=()=>{ setLive(true,'듣는 중… 숫자를 말해보세요'); btnMic.disabled=true; btnStop.disabled=false; };
+    r.onend  =()=>{ setLive(false,'대기 중'); btnMic.disabled=false; btnStop.disabled=true; if(listening){ try{r.start();}catch(e){} } };
+    r.onresult=(e)=>{
+      let txt='', final=false;
+      for(let i=e.resultIndex;i<e.results.length;i++){
+        const res=e.results[i];
+        txt = res[0].transcript.trim();
+        if(res.isFinal) final=true;
+      }
+      if(txt){
+        if(final) handleSpoken(txt);
+        else elSpoken.textContent='…'+txt; // 중간 인식 표시
+      }
+    };
+    r.onerror=(e)=>{ setLive(false,'인식 오류'); console.warn(e); };
+    return r;
+  }
+
+  function setLive(live,msg){ dot.classList.toggle('live',live); statusText.textContent=msg||''; }
+
+  async function startListen(){
+    if(listening) return;
+    try{
+      // 오디오 컨텍스트 깨우기(모바일/데스크톱 브라우저 정책)
+      getAudioCtx().resume();
+      await navigator.mediaDevices.getUserMedia({audio:true});
+      if(!recog) recog=initRecog();
+      listening=true; recog && recog.start();
+    }catch(e){ alert('마이크 권한이 필요합니다. 주소창 🔒 → 마이크 허용 후 새로고침'); }
+  }
+  function stopListen(){ listening=false; if(recog){ try{recog.stop();}catch(e){} } setLive(false,'대기 중'); btnMic.disabled=false; btnStop.disabled=true; }
+
+  // Controls
+  btnMic.onclick=startListen;
+  btnStop.onclick=stopListen;
+  btnNext.onclick=()=>{ playTone(660,0.08,'sine',0.25); next(true); };
+  btnRepeat.onclick=()=>speak(seq[idx]);
+  elApply.onclick=()=>buildSeq();
+  window.addEventListener('keydown',(e)=>{ if(e.code==='Space'){ e.preventDefault(); btnNext.click(); } });
+
+  // Init
+  buildSeq();
+  statusText.textContent='대기 중 (🎙️ 시작을 누르세요)';
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,340 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>초1용 50~100 숫자 말하기 연습 (Confetti + 띵동/땡)</title>
+<style>
+  :root{
+    --bg:#0b0e14; --card:#121725; --line:#232a37;
+    --ink:#e9eef7; --muted:#9aa4b2; --ok:#35d07f; --bad:#ff6b6b;
+  }
+  *{box-sizing:border-box}
+  html,body{height:100%}
+  body{margin:0;background:var(--bg);color:var(--ink);font-family:system-ui,-apple-system,Segoe UI,Roboto,"Noto Sans KR",sans-serif;overflow:hidden}
+  /* Confetti canvas overlay */
+  #confetti{position:fixed;inset:0;z-index:0;pointer-events:none}
+  .wrap{position:relative;z-index:1;max-width:720px;margin:0 auto;padding:18px}
+  header{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:10px}
+  header h1{font-size:18px;margin:0;font-weight:700}
+  .card{background:rgba(18,23,37,.86);backdrop-filter:blur(6px);border:1px solid var(--line);border-radius:16px;padding:16px}
+  .row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+  .chip{padding:8px 12px;border:1px solid var(--line);border-radius:999px;color:var(--muted);font-size:14px;background:rgba(255,255,255,.02)}
+  .big{font-size:96px;line-height:1;font-weight:900;text-align:center;margin:16px 0 4px;text-shadow:0 6px 24px rgba(0,0,0,.45)}
+  .sub{font-size:16px;text-align:center;color:var(--muted);min-height:22px}
+  .spoken{margin:8px 0 0;font-size:15px;text-align:center;color:#b7c2d6;min-height:28px}
+  .spoken b{color:#fff}
+  .center{display:flex;justify-content:center;gap:10px;margin:14px 0 8px;flex-wrap:wrap}
+  button{border:1px solid var(--line);background:#18213a;color:#eaf2ff;border-radius:12px;padding:12px 16px;font-size:16px;cursor:pointer}
+  button[disabled]{opacity:.5;cursor:not-allowed}
+  .primary{background:#244a86;border-color:#2a4e8a}
+  .ghost{background:transparent}
+  .ok{color:var(--ok)} .bad{color:var(--bad)}
+  .status{display:flex;align-items:center;gap:8px;justify-content:center;color:#9aa4b2;font-size:14px}
+  .dot{width:10px;height:10px;border-radius:50%;background:#666}
+  .dot.live{background:#2ecc71;box-shadow:0 0 0 6px #2ecc7140}
+  .bar{height:10px;background:rgba(10,14,24,.7);border:1px solid var(--line);border-radius:999px;overflow:hidden}
+  .fill{height:100%;width:0%;background:linear-gradient(90deg,#6ea8fe,#32d96b)}
+  .range{display:flex;gap:8px;align-items:center}
+  input[type=number]{width:88px;background:#101522;color:#dfe6ef;border:1px solid var(--line);border-radius:10px;padding:8px}
+  .help{font-size:12px;color:#9aa4b2;text-align:center;margin-top:6px}
+</style>
+</head>
+<body>
+<canvas id="confetti"></canvas>
+
+<div class="wrap">
+  <header>
+    <h1>🎤 50~100 숫자 말하기 연습</h1>
+    <div class="row"><span class="chip">정답 → 띵동 + 하늘에서 종이조각 · 오답 → 땡</span></div>
+  </header>
+
+  <div class="card">
+    <div class="row" style="justify-content:space-between;align-items:end">
+      <div class="range">
+        <label>시작</label><input id="start" type="number" value="50"/>
+        <label>끝</label><input id="end" type="number" value="100"/>
+        <button id="apply" class="ghost">범위 적용</button>
+      </div>
+      <div class="range"><label class="chip">진행: <span id="progressText">0 / 51</span></label></div>
+    </div>
+
+    <div class="bar" style="margin:12px 0 8px"><div id="fill" class="fill"></div></div>
+
+    <div id="current" class="big" aria-live="polite">50</div>
+    <div id="feedback" class="sub">&nbsp;</div>
+    <div id="spoken" class="spoken">💬 내가 말한 말: <b>-</b></div>
+
+    <div class="center">
+      <button id="btnMic" class="primary">🎙️ 시작(마이크)</button>
+      <button id="btnStop" class="ghost" disabled>⏹ 멈추기</button>
+      <button id="btnNext" class="ghost">➡️ 다음</button>
+      <button id="btnRepeat" class="ghost">🔁 다시 말하기(TTS)</button>
+    </div>
+
+    <div class="status">
+      <span id="dot" class="dot"></span>
+      <span id="statusText">대기 중</span>
+    </div>
+    <p class="help">iOS는 음성인식 미지원. <b>Live Server</b> 등으로 <code>http://localhost</code>에서 실행해 주세요. (스페이스바로도 진행 가능)</p>
+  </div>
+</div>
+
+<script>
+/* =======================
+   WebAudio: 효과음 (띵동/땡)
+   ======================= */
+let audioCtx;
+function getAudioCtx(){
+  if(!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  return audioCtx;
+}
+function envGain(ctx, attack=0.005, hold=0.05, release=0.15, peak=0.9){
+  const g = ctx.createGain();
+  const t = ctx.currentTime;
+  g.gain.setValueAtTime(0, t);
+  g.gain.linearRampToValueAtTime(peak, t+attack);
+  g.gain.setValueAtTime(peak, t+attack+hold);
+  g.gain.exponentialRampToValueAtTime(0.0001, t+attack+hold+release);
+  return g;
+}
+function playTone(freq=880, dur=0.15, type='sine', vol=0.9, delay=0){
+  const ctx = getAudioCtx();
+  const osc = ctx.createOscillator();
+  const g = envGain(ctx, 0.005, Math.max(0, dur-0.04), 0.12, vol);
+  osc.type = type;
+  osc.frequency.setValueAtTime(freq, ctx.currentTime + delay);
+  osc.connect(g).connect(ctx.destination);
+  osc.start(ctx.currentTime + delay);
+  osc.stop(ctx.currentTime + delay + dur + 0.2);
+}
+function playDingDong(){
+  playTone(1319, 0.12, 'sine', 0.9, 0);   // 딩
+  playTone(880,  0.16, 'sine', 0.9, 0.16); // 동
+}
+function playBuzz(){
+  playTone(220, 0.25, 'sawtooth', 0.7, 0); // 땡 느낌
+  const ctx = getAudioCtx();
+  const buffer = ctx.createBuffer(1, ctx.sampleRate*0.08, ctx.sampleRate);
+  const data = buffer.getChannelData(0);
+  for(let i=0;i<data.length;i++) data[i] = (Math.random()*2-1) * (1 - i/data.length) * 0.2;
+  const src = ctx.createBufferSource(); src.buffer = buffer;
+  const g = ctx.createGain(); g.gain.value = 0.35;
+  src.connect(g).connect(ctx.destination); src.start();
+}
+
+/* =======================
+   Confetti (위에서 사뿐히 떨어지는 종이 조각)
+   ======================= */
+const confettiCanvas = document.getElementById('confetti');
+const ctx2 = confettiCanvas.getContext('2d');
+let CW=innerWidth, CH=innerHeight;
+function resize(){ CW=innerWidth; CH=innerHeight; confettiCanvas.width=CW; confettiCanvas.height=CH; }
+resize(); addEventListener('resize', resize);
+
+const COLORS = ['#6ea8fe','#32d96b','#ffd166','#ff6b6b','#a78bfa','#ffffff','#b2f5ea'];
+let confettiPieces = [];
+let confettiRunning = false;
+
+function spawnConfettiRow(intensity=0.6){
+  // intensity: 0.3~1.0 권장 (한 번에 뿌리는 양)
+  const count = Math.floor(80 * intensity);
+  for(let i=0;i<count;i++){
+    const x = Math.random()*CW;
+    const size = 6 + Math.random()*10;
+    confettiPieces.push({
+      x, y: -10 - Math.random()*60,
+      w: size * (0.8 + Math.random()*0.6),
+      h: size * (0.6 + Math.random()*0.6),
+      vy: 1.2 + Math.random()*1.6,       // 낙하 속도
+      vx: (Math.random()*1.2 - 0.6),     // 좌우 바람
+      rot: Math.random()*Math.PI*2,
+      vr: (Math.random()*0.08 - 0.04),   // 회전 속도
+      color: COLORS[(Math.random()*COLORS.length)|0],
+      life: 0,
+      maxLife: 240 + Math.random()*120,  // 오래 가도 4~6초 내 사라짐
+      flip: Math.random()<0.5 ? 1 : -1   // 살짝 뒤집힘 효과
+    });
+  }
+}
+
+function stepConfetti(){
+  ctx2.clearRect(0,0,CW,CH);
+  for(let i=confettiPieces.length-1;i>=0;i--){
+    const p=confettiPieces[i];
+    p.life++;
+    p.x += p.vx + Math.sin((p.life+p.w)*0.03)*0.25; // 좌우 흔들림
+    p.y += p.vy;
+    p.rot += p.vr;
+    // 그리기
+    ctx2.save();
+    ctx2.translate(p.x, p.y);
+    ctx2.rotate(p.rot);
+    // 종이 앞/뒤 밝기 약간 다르게
+    const front = p.color;
+    const back = 'rgba(255,255,255,0.6)';
+    ctx2.fillStyle = (p.flip*(Math.sin(p.life*0.15))>0) ? front : back;
+    ctx2.fillRect(-p.w/2, -p.h/2, p.w, p.h);
+    ctx2.restore();
+
+    if(p.y > CH + 20 || p.life > p.maxLife) confettiPieces.splice(i,1);
+  }
+  if(confettiRunning || confettiPieces.length>0) requestAnimationFrame(stepConfetti);
+}
+
+function startConfetti(duration=1200, intensity=0.6){
+  // duration 동안 200ms 간격으로 얇게 여러 번 뿌림 (자연스러운 "하늘에서 내려옴")
+  confettiRunning = true;
+  const t0 = performance.now();
+  function tick(now){
+    if(now - t0 < duration){
+      spawnConfettiRow(intensity);
+      setTimeout(()=>spawnConfettiRow(intensity*0.75), 120);
+      setTimeout(()=>spawnConfettiRow(intensity*0.5), 220);
+      setTimeout(()=>spawnConfettiRow(intensity*0.35), 320);
+      setTimeout(()=>spawnConfettiRow(intensity*0.25), 420);
+      requestAnimationFrame(tick);
+    }else{
+      confettiRunning = false;
+    }
+  }
+  if(confettiPieces.length===0) requestAnimationFrame(stepConfetti);
+  requestAnimationFrame(tick);
+}
+
+/* =======================
+   학습 로직 (음성인식)
+   ======================= */
+(function(){
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  const elStart=document.getElementById('start'), elEnd=document.getElementById('end'), elApply=document.getElementById('apply');
+  const elCurrent=document.getElementById('current'), elFeedback=document.getElementById('feedback');
+  const elSpoken=document.getElementById('spoken').querySelector('b');
+  const elFill=document.getElementById('fill'), elProgressText=document.getElementById('progressText');
+  const btnMic=document.getElementById('btnMic'), btnStop=document.getElementById('btnStop'), btnNext=document.getElementById('btnNext'), btnRepeat=document.getElementById('btnRepeat');
+  const dot=document.getElementById('dot'), statusText=document.getElementById('statusText');
+  let seq=[],idx=0,recog=null,listening=false;
+
+  function buildSeq(){
+    const s=Math.min(+elStart.value||50, +elEnd.value||100);
+    const e=Math.max(+elStart.value||50, +elEnd.value||100);
+    seq=[]; for(let i=s;i<=e;i++) seq.push(i);
+    idx=0; updateUI();
+  }
+  function updateUI(){
+    const total=seq.length;
+    const cur=seq[idx]??seq[total-1];
+    elCurrent.textContent=cur;
+    elProgressText.textContent=`${Math.min(idx,total)} / ${total}`;
+    elFill.style.width=`${total?(idx/total)*100:0}%`;
+    elFeedback.innerHTML="&nbsp;";
+  }
+
+  const mapOnes={'영':0,'공':0,'일':1,'하나':1,'둘':2,'이':2,'셋':3,'삼':3,'넷':4,'사':4,'다섯':5,'오':5,'여섯':6,'육':6,'칠':7,'일곱':7,'팔':8,'여덟':8,'구':9,'아홉':9};
+  const mapTens={'오십':50,'육십':60,'칠십':70,'팔십':80,'구십':90,'백':100};
+  function parseKoreanNumber(s){
+    if(!s) return NaN;
+    s=s.replace(/\s+/g,'').replace(/[^\u3131-\u318F\uAC00-\uD7A30-9]/g,'');
+    if(/^\d+$/.test(s)) return +s;
+    if(s==='백') return 100;
+    for(const t in mapTens){
+      if(s.startsWith(t)){
+        const base=mapTens[t], rest=s.slice(t.length);
+        if(!rest) return base;
+        if(mapOnes[rest]!=null) return base+mapOnes[rest];
+      }
+    }
+    if(mapOnes[s]!=null) return mapOnes[s];
+    return NaN;
+  }
+
+  function speak(n){
+    try{ const u=new SpeechSynthesisUtterance(String(n)); u.lang='ko-KR'; speechSynthesis.cancel(); speechSynthesis.speak(u); }catch(e){}
+  }
+
+  function next(autoSpeak=true){
+    idx++;
+    if(idx>=seq.length){ finish(); return; }
+    elFeedback.innerHTML="&nbsp;"; elSpoken.textContent='-';
+    updateUI(); if(autoSpeak) speak(seq[idx]);
+  }
+  function finish(){
+    elCurrent.textContent="🎉 끝!";
+    elFeedback.innerHTML=`<span class="ok">아주 잘했어요! 👏</span>`;
+    startConfetti(1400, 0.9);
+    playDingDong();
+    stopListen();
+  }
+
+  function handleSpoken(text){
+    elSpoken.textContent=text;
+    const want=seq[idx];
+    const heard=parseKoreanNumber(text);
+    const numIn=Number(text.replace(/[^0-9]/g,''));
+    const val=!isNaN(heard)?heard:(!isNaN(numIn)?numIn:NaN);
+
+    if(val===want){
+      // 정답: 띵동 → 사뿐한 Confetti → 다음
+      elFeedback.innerHTML=`<span class="ok">정답! ${want} 👏</span>`;
+      playDingDong();
+      startConfetti(1000, 0.7);
+      setTimeout(()=>next(true), 260);
+    }else{
+      // 오답: 땡
+      elFeedback.innerHTML=isNaN(val)
+        ? `<span class="bad">다시 또박또박 말해볼까요? (정답 ${want})</span>`
+        : `<span class="bad">들린 값 ${val} (정답 ${want})</span>`;
+      playBuzz();
+    }
+  }
+
+  function initRecog(){
+    if(!SR){ alert('이 브라우저는 음성 인식을 지원하지 않아요. (Chrome/Edge 권장)'); return null; }
+    const r=new SR();
+    r.lang='ko-KR'; r.continuous=true; r.interimResults=true; r.maxAlternatives=3;
+    r.onstart=()=>{ setLive(true,'듣는 중… 숫자를 말해보세요'); btnMic.disabled=true; btnStop.disabled=false; };
+    r.onend  =()=>{ setLive(false,'대기 중'); btnMic.disabled=false; btnStop.disabled=true; if(listening){ try{r.start();}catch(e){} } };
+    r.onresult=(e)=>{
+      let txt='', final=false;
+      for(let i=e.resultIndex;i<e.results.length;i++){
+        const res=e.results[i];
+        txt = res[0].transcript.trim();
+        if(res.isFinal) final=true;
+      }
+      if(txt){
+        if(final) handleSpoken(txt);
+        else document.getElementById('spoken').querySelector('b').textContent='…'+txt;
+      }
+    };
+    r.onerror=(e)=>{ setLive(false,'인식 오류'); console.warn(e); };
+    return r;
+  }
+
+  function setLive(live,msg){ dot.classList.toggle('live',live); statusText.textContent=msg||''; }
+
+  async function startListen(){
+    if(listening) return;
+    try{
+      getAudioCtx().resume();
+      await navigator.mediaDevices.getUserMedia({audio:true});
+      if(!recog) recog=initRecog();
+      listening=true; recog && recog.start();
+    }catch(e){ alert('마이크 권한이 필요합니다. 주소창 🔒 → 마이크 허용 후 새로고침'); }
+  }
+  function stopListen(){ listening=false; if(recog){ try{recog.stop();}catch(e){} } setLive(false,'대기 중'); btnMic.disabled=false; btnStop.disabled=true; }
+
+  // Controls
+  btnMic.onclick=startListen;
+  btnStop.onclick=stopListen;
+  btnNext.onclick=()=>{ playTone(660,0.08,'sine',0.25); next(true); };
+  btnRepeat.onclick=()=>speak(seq[idx]);
+  elApply.onclick=()=>buildSeq();
+  window.addEventListener('keydown',(e)=>{ if(e.code==='Space'){ e.preventDefault(); btnNext.click(); } });
+
+  // Init
+  buildSeq();
+  statusText.textContent='대기 중 (🎙️ 시작을 누르세요)';
+})();
+</script>
+</body>
+</html>
